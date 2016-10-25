@@ -57,7 +57,7 @@
             {event_watcher, true},
             {event_watcher_threshold, 1000},
             {event_watcher_interval, 1000},
-            {event_watcher_marks_len, 3},
+            {event_watcher_max_over_cnt, 3},
             {event_watcher_reboot_after, 5000}
         ]}
  ]}.

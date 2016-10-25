@@ -90,7 +90,7 @@ decide_event_watcher(false) ->
 decide_event_watcher(true) ->
     Threshold = validate_positive(application:get_env(lager, event_watcher_threshold), 1000),
     Interval = validate_positive(application:get_env(lager, event_watcher_interval), 1000),
-    MarksLen = validate_positive(application:get_env(lager, event_watcher_marks_len), 3),
+    MarksLen = validate_positive(application:get_env(lager, event_watcher_max_over_cnt), 3),
     RebootAfter = validate_positive(application:get_env(lager, event_watcher_reboot_after), 5000),
     
     [{lager_event_watcher, {lager_event_watcher, start_link, 

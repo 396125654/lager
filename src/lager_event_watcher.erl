@@ -31,7 +31,8 @@
 -record(state, {
           threshold        :: non_neg_integer(),
           interval         :: non_neg_integer(),
-          marks            :: [non_neg_integer()],
+          cur_over_cnt     :: non_neg_integer(),
+          max_over_cnt     :: non_neg_integer(),
           reboot_after     :: non_neg_integer()
          }).
 
@@ -46,9 +47,9 @@
 %% @spec start_link() -> {ok, Pid} | ignore | {error, Error}
 %% @end
 %%--------------------------------------------------------------------
-start_link(Threshold, Interval, MarksLen, RebootAfter) ->
+start_link(Threshold, Interval, MaxOverCnt, RebootAfter) ->
     gen_server:start_link({local, ?SERVER}, ?MODULE,
-                          [Threshold, Interval, MarksLen, RebootAfter], []).
+                          [Threshold, Interval, MaxOverCnt, RebootAfter], []).
 
 get_state() ->
     gen_server:call(?SERVER, get_state).
@@ -56,7 +57,7 @@ get_state() ->
 set(KVs) ->
     [set(K, V) || {K, V} <- KVs].
 
--spec set(threshold | interval | marks_len | rebbot_after, term()) -> {ok, term()}.
+-spec set(threshold | interval | max_over_cnt | rebbot_after, term()) -> {ok, term()}.
 
 set(Key, Value) ->
     gen_server:call(?SERVER, {Key, Value}).
@@ -76,11 +77,12 @@ set(Key, Value) ->
 %%                     {stop, Reason}
 %% @end
 %%--------------------------------------------------------------------
-init([Threshold, Interval, MarksLen, RebootAfter]) ->
+init([Threshold, Interval, MaxOverCnt, RebootAfter]) ->
     erlang:send_after(Interval, self(), check),
     {ok, #state{threshold = Threshold,
                 interval = Interval,
-                marks = lists:duplicate(MarksLen, 0),
+                cur_over_cnt = 0,
+                max_over_cnt = MaxOverCnt,
                 reboot_after = RebootAfter
                }}.
 
@@ -107,10 +109,9 @@ handle_call({threshold, NewThreshold}, _From,
 handle_call({interval, NewInterval}, _From, 
             #state{interval = OldInterval} = State) ->
     {reply, {ok, OldInterval, NewInterval}, State#state{interval = NewInterval}};
-handle_call({marks_len, NewMarksLen}, _From, 
-            #state{marks = OldMarks} = State) ->
-    NewMarks = lists:duplicate(NewMarksLen, 0),
-    {reply, {ok, OldMarks, NewMarks}, State#state{marks = NewMarks}};
+handle_call({max_over_cnt, MaxOverCnt}, _From, 
+            #state{max_over_cnt = OldMaxOverCnt} = State) ->
+    {reply, {ok, OldMaxOverCnt, MaxOverCnt}, State#state{max_over_cnt = MaxOverCnt}};
 handle_call({reboot_after, NewRebootAfter}, _From, 
             #state{reboot_after = OldRebootAfter} = State) ->
     {reply, {ok, OldRebootAfter, NewRebootAfter}, State#state{reboot_after = NewRebootAfter}};
@@ -144,20 +145,21 @@ handle_cast(_Msg, State) ->
 %%--------------------------------------------------------------------
 handle_info(check, #state{threshold = Threshold,
                           interval = Interval,
-                          marks = Marks,
+                          cur_over_cnt = CurOverCnt,
+                          max_over_cnt = MaxOverCnt,
                           reboot_after = RebootAfter
                          } = State) ->
     try process_info(whereis(lager_event), message_queue_len) of
         {message_queue_len, QLen} ->
-            case check(QLen, Threshold, Marks) of
-                {kill, NewMarks} ->
+            case check(QLen, Threshold, MaxOverCnt, CurOverCnt) of
+                kill ->
                     exit(whereis(lager_event), kill),
                     error_logger:error_msg("lager event got killed~n"),
                     erlang:send_after(RebootAfter, self(), reboot),
-                    {noreply, State#state{marks = NewMarks}};
-                NewMarks ->
+                    {noreply, State#state{cur_over_cnt = 0}};
+                NewCurOverCnt ->
                     erlang:send_after(Interval, self(), check),
-                    {noreply, State#state{marks = NewMarks}}
+                    {noreply, State#state{cur_over_cnt = NewCurOverCnt}}
             end
     catch
         _C:_R ->
@@ -202,20 +204,12 @@ code_change(_OldVsn, State, _Extra) ->
 %%% Internal functions
 %%%===================================================================
 
-check(QLen, Threshold, Marks) when QLen < Threshold ->
-    lists:duplicate(length(Marks), 0);
-check(_, _, Marks) ->
-    MarksLen = length(Marks),
-    case count(1, Marks) of
-        Len when Len == MarksLen - 1 ->
-            {kill, lists:duplicate(MarksLen, 0)};
-        Len ->
-            lists:duplicate(Len + 1, 1) ++ lists:duplicate(MarksLen - Len - 1, 0)
-    end.
-
-count(_, []) ->
+check(QLen, Threshold, _MaxOverCnt, _CurOverCnt) when QLen < Threshold ->
     0;
-count(What, [What | T]) ->
-    1 + count(What, T);
-count(What, [_ | T]) ->
-    count(What, T).
+check(_QLen, _Threshold, MaxOverCnt, CurOverCnt) ->
+    case MaxOverCnt =< CurOverCnt + 1 of
+        true ->
+            kill;
+        false ->
+            CurOverCnt + 1
+    end.
