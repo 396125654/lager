@@ -27,6 +27,7 @@
 -endif.
 -export([start/0,
          start/2,
+         boot/0,
          stop/1]).
 
 start() ->
@@ -34,8 +35,10 @@ start() ->
 
 start(_StartType, _StartArgs) ->
     {ok, Pid} = lager_sup:start_link(),
+    SavedHandlers = boot(),
+    {ok, Pid, SavedHandlers}.
 
-
+boot() ->
     case application:get_env(lager, async_threshold) of
         undefined ->
             ok;
@@ -114,14 +117,14 @@ start(_StartType, _StartArgs) ->
         end,
 
     _ = lager_util:trace_filter(none), 
-
-    {ok, Pid, SavedHandlers}.
+    
+    SavedHandlers.
 
 
 stop(Handlers) ->
     lists:foreach(fun(Handler) ->
-          error_logger:add_report_handler(Handler)
-      end, Handlers).
+                          error_logger:add_report_handler(Handler)
+                  end, Handlers).
 
 expand_handlers([]) ->
     [];

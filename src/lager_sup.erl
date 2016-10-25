@@ -79,6 +79,25 @@ init([]) ->
             []
     end,
 
+    EventWatcher = decide_event_watcher(application:get_env(lager, event_watcher, false)),
+
     {ok, {{one_for_one, 10, 60},
-            Children ++ Crash
+            Children ++ Crash ++ EventWatcher
             }}.
+
+decide_event_watcher(false) ->
+    [];
+decide_event_watcher(true) ->
+    Threshold = validate_positive(application:get_env(lager, event_watcher_threshold), 1000),
+    Interval = validate_positive(application:get_env(lager, event_watcher_interval), 1000),
+    MarksLen = validate_positive(application:get_env(lager, event_watcher_marks_len), 3),
+    RebootAfter = validate_positive(application:get_env(lager, event_watcher_reboot_after), 5000),
+    
+    [{lager_event_watcher, {lager_event_watcher, start_link, 
+                            [Threshold, Interval, MarksLen, RebootAfter]},
+      permanent, 5000, worker, [lager_event_watcher]}].
+
+validate_positive({ok, Val}, _Default) when is_integer(Val) andalso Val >= 0 ->
+    Val;
+validate_positive(_Val, Default) ->
+    Default.
