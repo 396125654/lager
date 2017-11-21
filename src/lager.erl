@@ -116,7 +116,7 @@ do_log(Severity, Metadata, Format, Args, Size, SeverityAsInt, LevelThreshold, Tr
                 true ->
                     gen_event:notify(Pid, {log, LagerMsg});
                 false ->
-                    gen_event:sync_notify(Pid, {log, LagerMsg})
+                    catch gen_event:sync_notify(Pid, {log, LagerMsg})
             end;
         false ->
             ok
