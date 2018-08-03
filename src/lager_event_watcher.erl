@@ -167,10 +167,38 @@ handle_info(check, #state{threshold = Threshold,
             {noreply, State}
     end;
 
-handle_info(reboot, #state{interval = Interval} = State) ->
-    lager_app:boot(),
-    lager:critical("lager event handlers rebooted"),
-    erlang:send_after(Interval, self(), check),
+handle_info(reboot, #state{interval = Interval,
+                           threshold = Threshold,
+                           reboot_after = RebootAfter} = State) ->
+    Action =
+        try process_info(whereis(lager_event), message_queue_len) of
+            {message_queue_len, QLen} when QLen >= Threshold ->
+                kill;
+            _ ->
+                boot
+        catch
+            _:_ ->
+                boot
+        end,
+    case Action of
+        kill ->
+            exit(whereis(lager_event), kill),
+            error_logger:error_msg("lager event got killed~n"),
+            erlang:send_after(RebootAfter, self(), reboot);
+        boot ->
+            Boot = fun() ->
+                        lager_app:boot(),
+                        lager:critical("lager event handlers rebooted")
+                   end,
+            case safe_do(Boot, max(5000,RebootAfter)) of
+                {error, timeout} ->
+                    erlang:send_after(0, self(), reboot);
+                {error,_} ->
+                    erlang:send_after(RebootAfter, self(), reboot);
+                _ ->
+                    erlang:send_after(Interval, self(), check)
+            end
+    end,
     {noreply, State};
 handle_info(_Info, State) ->
     {noreply, State}.
@@ -212,4 +240,20 @@ check(_QLen, _Threshold, MaxOverCnt, CurOverCnt) ->
             kill;
         false ->
             CurOverCnt + 1
+    end.
+
+safe_do(Fun, Timeout) ->
+    {Pid, Ref} =
+        spawn_monitor(
+          fun()->
+                  exit({safe_do_res,Fun()})
+          end),
+    receive
+        {'DOWN', Ref, process, Pid, {safe_do_res, Res}} ->
+            Res;
+        {'DOWN', Ref, process, Pid, Error} ->
+            {error, Error}
+    after Timeout ->
+            exit(Pid,kill),
+            {error, timeout}
     end.
